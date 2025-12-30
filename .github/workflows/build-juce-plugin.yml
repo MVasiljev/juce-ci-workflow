@@ -223,68 +223,9 @@ jobs:
           name: ${{ inputs.plugin_name }}-v${{ inputs.version }}-Windows
           path: artifacts/windows/
 
-  build-linux:
-    name: Linux (VST3)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout plugin repo
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          # Install all JUCE Linux dependencies
-          sudo apt-get install -y \
-            libasound2-dev \
-            libjack-jackd2-dev \
-            ladspa-sdk \
-            libcurl4-openssl-dev \
-            libfreetype6-dev \
-            libx11-dev \
-            libxcomposite-dev \
-            libxcursor-dev \
-            libxext-dev \
-            libxinerama-dev \
-            libxrandr-dev \
-            libxrender-dev \
-            libglu1-mesa-dev \
-            mesa-common-dev \
-            libgtk-3-dev \
-            libfontconfig1-dev
-          # WebKitGTK - try 4.1 first (Ubuntu 24.04+), fallback to 4.0
-          sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
-
-      - name: Setup JUCE
-        run: |
-          if [ ! -d "JUCE" ]; then
-            git clone --depth 1 --branch ${{ inputs.juce_version }} https://github.com/juce-framework/JUCE.git ../JUCE
-          fi
-
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build --config Release --parallel
-
-      - name: Prepare artifacts
-        run: |
-          mkdir -p artifacts/linux
-          find build -name "*.vst3" -type d | head -1 | xargs -I {} cp -R {} artifacts/linux/
-          ls -la artifacts/linux/
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.plugin_name }}-v${{ inputs.version }}-Linux
-          path: artifacts/linux/
-
   create-release-bundle:
     name: Create Release Bundle
-    needs: [build-macos, build-windows, build-linux]
+    needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -296,10 +237,9 @@ jobs:
         run: |
           mkdir -p release
 
-          # Copy each platform's artifacts
+          # Copy each platform's artifacts (macOS + Windows only)
           cp -R all-artifacts/*-macOS/* release/ 2>/dev/null || true
           cp -R all-artifacts/*-Windows/* release/ 2>/dev/null || true
-          cp -R all-artifacts/*-Linux/* release/ 2>/dev/null || true
 
           # Create final ZIP
           cd release
