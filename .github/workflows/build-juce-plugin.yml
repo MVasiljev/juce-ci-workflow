@@ -1,0 +1,205 @@
+# Reusable workflow for building JUCE audio plugins
+# Usage from other repos:
+#   jobs:
+#     build:
+#       uses: MVasiljev/juce-ci-workflow/.github/workflows/build-juce-plugin.yml@main
+#       with:
+#         plugin_name: "My Plugin"
+#         version: "1.0.0"
+
+name: Build JUCE Plugin
+
+on:
+  workflow_call:
+    inputs:
+      plugin_name:
+        description: 'Name of the plugin (e.g., "Niviem Phase II")'
+        required: true
+        type: string
+      version:
+        description: 'Version string (e.g., "1.0.0")'
+        required: true
+        type: string
+      juce_version:
+        description: 'JUCE version to use'
+        required: false
+        type: string
+        default: '8.0.4'
+      build_au:
+        description: 'Build Audio Unit (macOS only)'
+        required: false
+        type: boolean
+        default: true
+      build_vst3:
+        description: 'Build VST3'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build-macos:
+    name: macOS (AU + VST3)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout plugin repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup JUCE
+        run: |
+          if [ ! -d "JUCE" ]; then
+            git clone --depth 1 --branch ${{ inputs.juce_version }} https://github.com/juce-framework/JUCE.git ../JUCE
+          fi
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts/macos
+
+          # Find and copy AU
+          if [ "${{ inputs.build_au }}" = "true" ]; then
+            find build -name "*.component" -type d | head -1 | xargs -I {} cp -R {} artifacts/macos/
+          fi
+
+          # Find and copy VST3
+          if [ "${{ inputs.build_vst3 }}" = "true" ]; then
+            find build -name "*.vst3" -type d | head -1 | xargs -I {} cp -R {} artifacts/macos/
+          fi
+
+          ls -la artifacts/macos/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.plugin_name }}-v${{ inputs.version }}-macOS
+          path: artifacts/macos/
+
+  build-windows:
+    name: Windows (VST3)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout plugin repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup JUCE
+        run: |
+          if (!(Test-Path "JUCE")) {
+            git clone --depth 1 --branch ${{ inputs.juce_version }} https://github.com/juce-framework/JUCE.git ../JUCE
+          }
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts/windows
+          find build -name "*.vst3" -type d | head -1 | xargs -I {} cp -R {} artifacts/windows/
+          ls -la artifacts/windows/
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.plugin_name }}-v${{ inputs.version }}-Windows
+          path: artifacts/windows/
+
+  build-linux:
+    name: Linux (VST3)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
+
+      - name: Setup JUCE
+        run: |
+          if [ ! -d "JUCE" ]; then
+            git clone --depth 1 --branch ${{ inputs.juce_version }} https://github.com/juce-framework/JUCE.git ../JUCE
+          fi
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts/linux
+          find build -name "*.vst3" -type d | head -1 | xargs -I {} cp -R {} artifacts/linux/
+          ls -la artifacts/linux/
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.plugin_name }}-v${{ inputs.version }}-Linux
+          path: artifacts/linux/
+
+  create-release-bundle:
+    name: Create Release Bundle
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Create combined bundle
+        run: |
+          mkdir -p release
+
+          # Copy each platform's artifacts
+          cp -R all-artifacts/*-macOS/* release/ 2>/dev/null || true
+          cp -R all-artifacts/*-Windows/* release/ 2>/dev/null || true
+          cp -R all-artifacts/*-Linux/* release/ 2>/dev/null || true
+
+          # Create final ZIP
+          cd release
+          zip -r "../${{ inputs.plugin_name }}_v${{ inputs.version }}_All_Platforms.zip" .
+
+          ls -la ../
+
+      - name: Upload combined bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.plugin_name }}-v${{ inputs.version }}-ALL-PLATFORMS
+          path: ${{ inputs.plugin_name }}_v${{ inputs.version }}_All_Platforms.zip
