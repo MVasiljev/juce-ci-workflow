@@ -121,17 +121,30 @@ jobs:
           # Find and sign all plugins
           IDENTITY="Developer ID Application: Milan Vasiljev ($APPLE_TEAM_ID)"
 
+          # Check for entitlements file (for network access in sandboxed DAWs)
+          ENTITLEMENTS_FLAG=""
+          if [ -f "Resources/NiviemPhaseII.entitlements" ]; then
+            ENTITLEMENTS_FLAG="--entitlements Resources/NiviemPhaseII.entitlements"
+            echo "Using entitlements: Resources/NiviemPhaseII.entitlements"
+          elif ls Resources/*.entitlements 1> /dev/null 2>&1; then
+            ENT_FILE=$(ls Resources/*.entitlements | head -1)
+            ENTITLEMENTS_FLAG="--entitlements $ENT_FILE"
+            echo "Using entitlements: $ENT_FILE"
+          else
+            echo "No entitlements file found, signing without entitlements"
+          fi
+
           # Sign AU
           AU_PATH=$(find build -name "*.component" -type d | head -1)
           if [ -n "$AU_PATH" ]; then
-            codesign --force -s "$IDENTITY" -v "$AU_PATH" --deep --strict --options=runtime --timestamp
+            codesign --force -s "$IDENTITY" -v "$AU_PATH" --deep --strict --options=runtime --timestamp $ENTITLEMENTS_FLAG
             echo "Signed AU: $AU_PATH"
           fi
 
           # Sign VST3
           VST3_PATH=$(find build -name "*.vst3" -type d | head -1)
           if [ -n "$VST3_PATH" ]; then
-            codesign --force -s "$IDENTITY" -v "$VST3_PATH" --deep --strict --options=runtime --timestamp
+            codesign --force -s "$IDENTITY" -v "$VST3_PATH" --deep --strict --options=runtime --timestamp $ENTITLEMENTS_FLAG
             echo "Signed VST3: $VST3_PATH"
           fi
 
