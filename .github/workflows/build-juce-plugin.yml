@@ -130,6 +130,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
+          # Try webkit 4.1 first (Ubuntu 24.04), fallback to 4.0 (Ubuntu 22.04)
           sudo apt-get install -y \
             libasound2-dev \
             libjack-jackd2-dev \
@@ -143,9 +144,10 @@ jobs:
             libxinerama-dev \
             libxrandr-dev \
             libxrender-dev \
-            libwebkit2gtk-4.0-dev \
             libglu1-mesa-dev \
             mesa-common-dev
+          # WebKitGTK - try 4.1 first (Ubuntu 24.04+), fallback to 4.0
+          sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
 
       - name: Setup JUCE
         run: |
