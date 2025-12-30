@@ -6,6 +6,7 @@
 #       with:
 #         plugin_name: "My Plugin"
 #         version: "1.0.0"
+#       secrets: inherit
 
 name: Build JUCE Plugin
 
@@ -35,6 +36,17 @@ on:
         required: false
         type: boolean
         default: true
+    secrets:
+      APPLE_CERT_BASE64:
+        required: false
+      APPLE_CERT_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_ID_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
 
 jobs:
   build-macos:
@@ -60,6 +72,86 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      - name: Import Code Signing Certificate
+        if: ${{ secrets.APPLE_CERT_BASE64 != '' }}
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          # Decode certificate
+          echo "$APPLE_CERT_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
+
+          # Create and configure keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
+          security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          # Allow codesign to access the key
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          echo "Certificate imported successfully"
+
+      - name: Code Sign Plugins
+        if: ${{ secrets.APPLE_CERT_BASE64 != '' }}
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Find and sign all plugins
+          IDENTITY="Developer ID Application: Milan Vasiljev ($APPLE_TEAM_ID)"
+
+          # Sign AU
+          AU_PATH=$(find build -name "*.component" -type d | head -1)
+          if [ -n "$AU_PATH" ]; then
+            codesign --force -s "$IDENTITY" -v "$AU_PATH" --deep --strict --options=runtime --timestamp
+            echo "Signed AU: $AU_PATH"
+          fi
+
+          # Sign VST3
+          VST3_PATH=$(find build -name "*.vst3" -type d | head -1)
+          if [ -n "$VST3_PATH" ]; then
+            codesign --force -s "$IDENTITY" -v "$VST3_PATH" --deep --strict --options=runtime --timestamp
+            echo "Signed VST3: $VST3_PATH"
+          fi
+
+      - name: Notarize Plugins
+        if: ${{ secrets.APPLE_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Create zip for notarization
+          mkdir -p notarize_temp
+
+          AU_PATH=$(find build -name "*.component" -type d | head -1)
+          VST3_PATH=$(find build -name "*.vst3" -type d | head -1)
+
+          [ -n "$AU_PATH" ] && cp -R "$AU_PATH" notarize_temp/
+          [ -n "$VST3_PATH" ] && cp -R "$VST3_PATH" notarize_temp/
+
+          ditto -c -k --keepParent notarize_temp notarize.zip
+
+          # Submit for notarization
+          xcrun notarytool submit notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Staple notarization
+          [ -n "$AU_PATH" ] && xcrun stapler staple "$AU_PATH"
+          [ -n "$VST3_PATH" ] && xcrun stapler staple "$VST3_PATH"
+
+          echo "Notarization complete!"
 
       - name: Prepare artifacts
         run: |
