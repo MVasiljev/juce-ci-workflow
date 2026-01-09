@@ -216,9 +216,14 @@ jobs:
             git clone --depth 1 --branch ${{ inputs.juce_version }} https://github.com/juce-framework/JUCE.git ../JUCE
           }
 
+      - name: Install WebView2 SDK
+        run: |
+          # Install WebView2 SDK via NuGet (required for JUCE WebBrowserComponent on Windows)
+          nuget install Microsoft.Web.WebView2 -Version 1.0.2792.45 -OutputDirectory ${{ github.workspace }}/webview2
+
       - name: Configure CMake
         run: |
-          cmake -B build -G "Visual Studio 17 2022" -A x64
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -DJUCE_WEBVIEW2_PACKAGE_LOCATION="${{ github.workspace }}/webview2"
 
       - name: Build
         run: cmake --build build --config Release --parallel
